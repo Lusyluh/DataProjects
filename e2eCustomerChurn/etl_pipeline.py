@@ -1,3 +1,4 @@
+import sys
 import pandas as pd
 import psycopg2
 from psycopg2 import sql
@@ -8,11 +9,11 @@ import os
 load_dotenv()
 
 # --- Database connection parameters--
-DB_HOST = os.getenv("DB_HOST", "localhost")
-DB_NAME = os.getenv("DB_NAME", "customer_churn_db")
-DB_USER = os.getenv("DB_USER", "postgres")
-DB_PASSWORD = os.getenv("DB_PASSWORD", "superuser")
-print(DB_USER, DB_PASSWORD)
+DB_URL = os.getenv("DATABASE_URL")
+# DB_HOST = os.getenv("DB_HOST", "localhost")
+# DB_NAME = os.getenv("DB_NAME", "customer_churn_db")
+# DB_USER = os.getenv("DB_USER", "postgres")
+# DB_PASSWORD = os.getenv("DB_PASSWORD", "superuser")
 
 
 # connect to the PostgreSQL database
@@ -24,9 +25,8 @@ def get_db_connection():
         psycopg2.extensions.connection: A connection object to the database.
     """
     try:
-        conn = psycopg2.connect(
-            host=DB_HOST, database=DB_NAME, user=DB_USER, password=DB_PASSWORD
-        )
+        conn = psycopg2.connect(DB_URL)
+        print("Database connection established successfully.")
         return conn
     except Exception as e:
         print(f"Error connecting to the database: {e}")
@@ -64,10 +64,10 @@ def load_to_staging(df, table_name, conn):
     conn = get_db_connection()
     if conn is None:
         return
-    if df.empty:
-        print("No data to load to {table_name}.")
-        return
-
+    # if df.empty:
+    #     print(f"No data to load to {table_name}.")
+    #     return
+    #
     cur = conn.cursor()
     cols = ", ".join(df.columns)
     placeholders = ", ".join(["%s"] * len(df.columns))
@@ -82,7 +82,7 @@ def load_to_staging(df, table_name, conn):
         conn.commit()
         print(f"Loaded {len(df)} rows into the staging table '{table_name}'.")
     except Exception as e:
-        print(f"Error loading data to staging: {e}")
+        print(f"Error loading data to staging table {table_name}: {e}")
     finally:
         conn.close()
 
@@ -110,8 +110,7 @@ def transform_and_load_core(conn):
                     FROM stg_customer_demographics
                     UNION
                     SELECT customerid, null, null, null, null
-                    FROM stg_customer_services
-                    ON CONFLICT (customerid) DO NOTHING;
+                    FROM stg_customer_services;
                     """
         )
         print("Created dim_customer table.")
@@ -123,7 +122,7 @@ def transform_and_load_core(conn):
 
         # Transformations for dim_customer
         dim_cust_df = raw_customers.copy()
-        dim_cust_df["seniorcitizen"] = dim_cust_df["seniorcitizen"].apply(
+        dim_cust_df["is_senior_citizen"] = dim_cust_df["seniorcitizen"].apply(
             lambda x: True
             if str(x).strip().upper() == "YES" or str(x).strip() == "1"
             else (
@@ -135,18 +134,20 @@ def transform_and_load_core(conn):
 
         dim_cust_df["has_partner"] = dim_cust_df["partner"].map(
             {
-                "YES": True,
-                "NO": False,
+                "Yes": True,
+                "No": False,
                 "No internet service": False,
                 "No phone service": False,
                 "": None,
                 None: None,
             }
         )
+        # print(dim_cust_df["has_partner"])
+        # sys.exit("stopped for inspection")
         dim_cust_df["has_dependents"] = dim_cust_df["dependents"].map(
             {
-                "YES": True,
-                "NO": False,
+                "Yes": True,
+                "No": False,
                 "No internet service": False,
                 "No phone service": False,
                 "": None,
@@ -162,15 +163,16 @@ def transform_and_load_core(conn):
             try:
                 cur.execute(
                     """
-                INSERT INTO dim_customer (customer_id, gender, is_senior_citizen, has_partner, has_dependents)
-                VALUES (%s, %s, %s, %s, %s)
-                ON CONFLICT (customer_id) DO UPDATE SET
-                    gender = EXCLUDED.gender,
-                    is_senior_citizen = EXCLUDED.is_senior_citizen,  
-                    has_partner = EXCLUDED.has_partner,
-                    has_dependents = EXCLUDED.has_dependents
-                updated_at = current_timestamp;
-                """,
+                    INSERT INTO dim_customer
+                        (customer_id, gender, is_senior_citizen, has_partner, has_dependents)
+                        VALUES (%s, %s, %s, %s, %s)
+                        ON CONFLICT (customer_id) DO UPDATE SET 
+                        gender = EXCLUDED.gender, 
+                        is_senior_citizen = EXCLUDED.is_senior_citizen,
+                        has_partner = EXCLUDED.has_partner, 
+                        has_dependents = EXCLUDED.has_dependents,
+                        updated_at = CURRENT_TIMESTAMP;
+                    """,
                     (
                         row["customerid"],
                         row["gender"],
@@ -180,10 +182,14 @@ def transform_and_load_core(conn):
                     ),
                 )
             except Exception as e:
-                print(f"Error inserting row {index} into dim_customer: {e}")
+                # print(f"Error inserting row {index} into dim_customer: {e}")
+                print(
+                    f"Error inserting or updating dim_customer for {row['customerid']}: {e}"
+                )
+                conn.rollback()
                 continue
         conn.commit()
-        print("Loaded data into dim_customer table.")
+        print(f"Loaded {len(dim_cust_df)} into dim_customer table.")
 
         # Create fact_churn_events table
 
@@ -200,14 +206,36 @@ if __name__ == "__main__":
     if conn:
         try:
             # 1.  Extract data from the CSV file
-            customer_demographics_raw = "customer_demographics_raw.csv"
-            customer_services_raw = "customer_services_raw.csv"
+            customer_demographics_raw = extract_data("customer_demographics_raw.csv")
+            customer_services_raw = extract_data("customer_services_raw.csv")
 
             # 2. Load data into staging tables
+            print("Columns", customer_demographics_raw.columns)
             load_to_staging(
                 customer_demographics_raw, "stg_customer_demographics", conn
             )
             load_to_staging(customer_services_raw, "stg_customer_services", conn)
+            # var_10_col = [
+            #     "PhoneService",
+            #     "MultipleLines",
+            #     "OnlineSecurity",
+            #     "OnlineBackup",
+            #     "DeviceProtection",
+            #     "TechSupport",
+            #     "StreamingTV",
+            #     "StreamingMovies",
+            #     "PaperlessBilling",
+            #     "Churn",
+            # ]
+            # for col in var_10_col:
+            #     long_vals = customer_services_raw[
+            #         customer_services_raw[col].astype(str).str.len() > 10
+            #     ]
+            #     if not long_vals.empty:
+            #         print(f"Column '{col}' has values longer than 10 characters.")
+            #         print(long_vals[[col]])
+            # print("Columns", customer_services_raw)
+            # print("Columns", customer_services_raw.columns)
 
             # 3.  Transform and load data into core tables
             transform_and_load_core(conn)

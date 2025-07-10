@@ -26,7 +26,7 @@ customer_pk SERIAL PRIMARY KEY,
     UPDATED_AT TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP);
 
 CREATE TABLE stg_customer_services (
-customerid VARCHAR(225),
+customerid VARCHAR(255),
 phoneservice VARCHAR(10),
 multiplelines VARCHAR(10),
 internetservice VARCHAR(50),
@@ -39,9 +39,9 @@ streamingmovies VARCHAR(10),
     contract VARCHAR(50),
     paperlessbilling VARCHAR(10),
     paymentmethod VARCHAR(50),
-    monthlycharges DECIMAL(10, 2),
-    totalcharges DECIMAL(10, 2),
-    tenure VARCHAR(10), --keeping it a string to handle potentila raw data issues
+    monthlycharges VARCHAR(20),
+    totalcharges VARCHAR(20),
+    tenure VARCHAR(20), --keeping it a string to handle potentila raw data issues
     churn VARCHAR(10),
     );
 
