@@ -142,8 +142,6 @@ def transform_and_load_core(conn):
                 None: None,
             }
         )
-        # print(dim_cust_df["has_partner"])
-        # sys.exit("stopped for inspection")
         dim_cust_df["has_dependents"] = dim_cust_df["dependents"].map(
             {
                 "Yes": True,
@@ -164,7 +162,13 @@ def transform_and_load_core(conn):
                 cur.execute(
                     """
                     INSERT INTO dim_customer
-                        (customer_id, gender, is_senior_citizen, has_partner, has_dependents)
+                        (
+                            customer_id,
+                            gender,
+                            is_senior_citizen,
+                            has_partner,
+                            has_dependents
+                        )
                         VALUES (%s, %s, %s, %s, %s)
                         ON CONFLICT (customer_id) DO UPDATE SET 
                         gender = EXCLUDED.gender, 
@@ -189,9 +193,123 @@ def transform_and_load_core(conn):
                 conn.rollback()
                 continue
         conn.commit()
-        print(f"Loaded {len(dim_cust_df)} into dim_customer table.")
+        print(f"Successfully loaded {len(dim_cust_df)} into dim_customer table.")
 
         # Create fact_churn_events table
+
+        # get customer pk for existing customers
+        customer_pks = pd.read_sql(
+            "SELECT customer_pk, customer_id FROM dim_customer", conn
+        )
+        customer_pk_map = customer_pks.set_index("customer_id")["customer_pk"].to_dict()
+
+        # get data from the customer services staging table
+        cur.execute("SELECT * FROM stg_customer_services")
+        raw_services = pd.DataFrame(
+            cur.fetchall(), columns=[desc[0] for desc in cur.description]
+        )
+
+        # Transformations for fact_churn_events
+        fact_churn_df = raw_services.copy()
+        fact_churn_df["customer_pk"] = fact_churn_df["customerid"].map(customer_pk_map)
+        # if there are unmapped customer ids, then drop them
+        fact_churn_df.dropna(subset=["customer_pk"], inplace=True)
+
+        # Handle booleans
+        bool_map = {
+            "Yes": True,
+            "No": False,
+            "No internet service": False,
+            "No phone service": False,
+            "": False,
+            None: False,
+        }
+
+        for col in [
+            "phoneservice",
+            "multiplelines",
+            "onlinesecurity",
+            "onlinebackup",
+            "deviceprotection",
+            "techsupport",
+            "streamingtv",
+            "streamingmovies",
+            "paperlessbilling",
+            "churn",
+        ]:
+            fact_churn_df[col] = fact_churn_df[col].map(bool_map).fillna(False)
+
+        # handles the numeric columns and errors
+        fact_churn_df["monthlycharges"] = pd.to_numeric(
+            fact_churn_df["monthlycharges"], errors="coerce"
+        )
+        fact_churn_df["totalcharges"] = pd.to_numeric(
+            fact_churn_df["totalcharges"], errors="coerce"
+        )
+        fact_churn_df["tenure"] = pd.to_numeric(
+            fact_churn_df["tenure"], errors="coerce"
+        )
+
+        # imputation and validation - calculate mean and fill NaNs
+        fact_churn_df.fillna(
+            {
+                "monthlycharges": fact_churn_df["monthlycharges"].median(),
+                "totalcharges": fact_churn_df["totalcharges"].median(),
+                "tenure": 0,
+            },
+            inplace=True,
+        )
+
+        # ensure no negative values in tenure column
+        fact_churn_df.loc[fact_churn_df["tenure"] < 0, "tenure"] = 0
+
+        # fill missing internet service values
+        fact_churn_df["internetservice"] = fact_churn_df["internetservice"].replace(
+            "No internet service", "No"
+        )
+
+        # insert values into fact churn events table
+        count_inserts = 0
+        for index, row in fact_churn_df.iterrows():
+            try:
+                cur.execute(
+                    """
+                    INSERT INTO fact_churn_events(
+                            customer_pk, phone_service, multiple_lines,internet_service,online_security,
+                            online_backup, device_protection, tech_support, streaming_tv,
+                            streaming_movies,contract_type, paperless_billing,payment_method,monthly_charges,
+                            total_charges, tenure_months, churned
+                        )
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            """,
+                    (
+                        row["customer_pk"],
+                        row["phoneservice"],
+                        row["multiplelines"],
+                        row["internetservice"],
+                        row["onlinesecurity"],
+                        row["onlinebackup"],
+                        row["deviceprotection"],
+                        row["techsupport"],
+                        row["streamingtv"],
+                        row["streamingmovies"],
+                        row["contract"],
+                        row["paperlessbilling"],
+                        row["paymentmethod"],
+                        row["monthlycharges"],
+                        row["totalcharges"],
+                        row["tenure"],
+                        row["churn"],
+                    ),
+                )
+                count_inserts += 1
+
+            except Exception as e:
+                print(f"Error inserting row {index} into fact_churn_events: {e}")
+                conn.rollback()
+                continue
+        conn.commit()  # commit any remaining rows
+        print(f"Successfully loaded {count_inserts} rows into fact_churn_events table.")
 
     except Exception as e:
         conn.rollback()
@@ -210,7 +328,7 @@ if __name__ == "__main__":
             customer_services_raw = extract_data("customer_services_raw.csv")
 
             # 2. Load data into staging tables
-            print("Columns", customer_demographics_raw.columns)
+
             load_to_staging(
                 customer_demographics_raw, "stg_customer_demographics", conn
             )
@@ -241,4 +359,4 @@ if __name__ == "__main__":
             transform_and_load_core(conn)
         finally:
             conn.close()
-            print("ETL pipeline completed successfully.")
+            print("ETL pipeline completed successfully and Database connection closed.")
