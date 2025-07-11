@@ -208,6 +208,8 @@ def transform_and_load_core(conn):
         raw_services = pd.DataFrame(
             cur.fetchall(), columns=[desc[0] for desc in cur.description]
         )
+        # handle duplicates
+        raw_customers = raw_customers.drop_duplicates(subset="customerid")
 
         # Transformations for fact_churn_events
         fact_churn_df = raw_services.copy()
