@@ -56,8 +56,8 @@ dependents VARCHAR(10)
 CREATE TABLE fact_churn_events (
 event_pk SERIAL PRIMARY KEY,
 customer_pk INT NOT NULL,
-phone_service VARCHAR(10),
-multiple_lines VARCHAR(10),
+phone_service BOOLEAN,
+multiple_lines BOOLEAN,
 internet_service VARCHAR(50),
 online_security BOOLEAN,
 online_backup BOOLEAN,
