@@ -32,4 +32,8 @@ This project follows an ETL architecture, moving data through a Staging Layr to 
 
 Technologies Used
 
-1. Python
+1. SQL DB (PostgreSQL)
+2. Python
+   Pandas : For data manipulation, cleaning and transformation
+   Psycopg2 : For connecting to and interacting with the SQL database
+   python-dotenv : For secure management of database credentials

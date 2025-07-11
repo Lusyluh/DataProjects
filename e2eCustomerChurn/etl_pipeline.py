@@ -335,27 +335,6 @@ if __name__ == "__main__":
                 customer_demographics_raw, "stg_customer_demographics", conn
             )
             load_to_staging(customer_services_raw, "stg_customer_services", conn)
-            # var_10_col = [
-            #     "PhoneService",
-            #     "MultipleLines",
-            #     "OnlineSecurity",
-            #     "OnlineBackup",
-            #     "DeviceProtection",
-            #     "TechSupport",
-            #     "StreamingTV",
-            #     "StreamingMovies",
-            #     "PaperlessBilling",
-            #     "Churn",
-            # ]
-            # for col in var_10_col:
-            #     long_vals = customer_services_raw[
-            #         customer_services_raw[col].astype(str).str.len() > 10
-            #     ]
-            #     if not long_vals.empty:
-            #         print(f"Column '{col}' has values longer than 10 characters.")
-            #         print(long_vals[[col]])
-            # print("Columns", customer_services_raw)
-            # print("Columns", customer_services_raw.columns)
 
             # 3.  Transform and load data into core tables
             transform_and_load_core(conn)
